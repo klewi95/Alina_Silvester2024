@@ -1,0 +1,9 @@
+#1 Funktion: Custom Getränke eintragen. Menge und Alkoholgehalt
+
+#2 Entferne Party Dauer
+
+#3 Nichttrinker verwalten
+
+#4 Weed verwalten
+
+#5 Getränke verwalten. Zählt herunter.
