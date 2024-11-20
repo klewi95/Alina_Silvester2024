@@ -74,29 +74,49 @@ class BarcodeScanner:
         img = frame.to_ndarray(format="bgr24")
         current_time = time.time()
         
-        # Nur alle 2 Sekunden scannen
-        if current_time - self.last_scan_time > 2:
-            barcodes = decode(img)
+        try:
+            # Debug-Info
+            if not hasattr(self, 'frame_count'):
+                self.frame_count = 0
+            self.frame_count += 1
             
-            for barcode in barcodes:
-                # Zeichne Rechteck um erkannten Barcode
-                points = barcode.polygon
-                if len(points) == 4:
-                    pts = np.array(points, np.int32)
-                    pts = pts.reshape((-1, 1, 2))
-                    cv2.polylines(img, [pts], True, (0, 255, 0), 2)
+            # Nur alle 0.5 Sekunden scannen
+            if current_time - self.last_scan_time > 0.5:
+                # Debug-Info
+                st.session_state.scan_status = "Scanning..."
                 
-                # Decodiere Barcode-Daten
-                self.barcode_data = barcode.data.decode('utf-8')
-                self.last_scan_time = current_time
+                # Bildqualität verbessern
+                gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+                # Kontrast erhöhen
+                gray = cv2.convertScaleAbs(gray, alpha=1.5, beta=0)
                 
-                # Zeige erkannten Barcode an
-                x = barcode.rect.left
-                y = barcode.rect.top
-                cv2.putText(img, self.barcode_data, (x, y - 10),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                barcodes = decode(gray)
+                
+                for barcode in barcodes:
+                    # Rechteck um Barcode zeichnen
+                    points = barcode.polygon
+                    if len(points) == 4:
+                        pts = np.array(points, np.int32)
+                        pts = pts.reshape((-1, 1, 2))
+                        cv2.polylines(img, [pts], True, (0, 255, 0), 2)
+                    
+                    # Barcode-Daten
+                    self.barcode_data = barcode.data.decode('utf-8')
+                    self.last_scan_time = current_time
+                    
+                    # Debug-Info
+                    st.session_state.scan_status = f"Barcode gefunden: {self.barcode_data}"
+                    
+                    # Text auf Bild
+                    x = barcode.rect.left
+                    y = barcode.rect.top
+                    cv2.putText(img, self.barcode_data, (x, y - 10),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                
+        except Exception as e:
+            st.session_state.scan_status = f"Fehler beim Scannen: {str(e)}"
         
-        return frame
+        return img
 
 def get_drink_info_from_barcode(barcode):
     """Ruft Getränkeinformationen von OpenFoodFacts API ab"""
@@ -564,23 +584,52 @@ elif st.session_state.current_page == "Getränke":
             
             with col1:
                 st.write("##### Option 1: Barcode scannen")
+                
+                # Status-Info hinzufügen
+                if 'scan_status' not in st.session_state:
+                    st.session_state.scan_status = "Scanner bereit..."
+                
+                # Scanner Status anzeigen
+                st.info(f"Scanner Status: {st.session_state.scan_status}")
+                
+                # Scanner starten
                 scanner = BarcodeScanner()
                 ctx = webrtc_streamer(
                     key="drink-scanner",
                     video_processor_factory=lambda: scanner,
-                    media_stream_constraints={"video": True, "audio": False},
+                    media_stream_constraints={
+                        "video": {
+                            "width": {"ideal": 1280},
+                            "height": {"ideal": 720},
+                            "facingMode": "environment"  # Rückkamera bei Mobilgeräten
+                        },
+                        "audio": False
+                    },
                     async_processing=True
                 )
                 
                 if ctx.video_processor and scanner.barcode_data:
                     if time.time() - st.session_state.last_scan_time > 2:
-                        drink_info = get_drink_info_from_barcode(scanner.barcode_data)
-                        if drink_info:
-                            st.session_state.barcode_result = drink_info
-                            st.success(f"Getränk erkannt: {drink_info['name']}")
-                            if drink_info['image_url']:
-                                st.image(drink_info['image_url'], width=100)
+                        with st.spinner("Suche Getränk in Datenbank..."):
+                            drink_info = get_drink_info_from_barcode(scanner.barcode_data)
+                            if drink_info:
+                                st.session_state.barcode_result = drink_info
+                                st.success(f"✅ Getränk erkannt: {drink_info['name']}")
+                                if drink_info['image_url']:
+                                    st.image(drink_info['image_url'], width=100)
+                            else:
+                                st.error("❌ Getränk nicht in Datenbank gefunden")
                         st.session_state.last_scan_time = time.time()
+
+                # Hilfe-Text
+                with st.expander("📝 Scanning Tipps"):
+                    st.markdown("""
+                    - Halten Sie den Barcode ruhig und gerade in die Kamera
+                    - Achten Sie auf gute Beleuchtung
+                    - Der Barcode sollte mindestens 1/3 des Bildschirms ausfüllen
+                    - Versuchen Sie verschiedene Abstände zur Kamera
+                    - Bei Mobilgeräten: Erlauben Sie den Zugriff auf die Kamera
+                    """)
                 
             with col2:
                 st.write("##### Option 2: Aus Vorschlägen wählen")
