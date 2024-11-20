@@ -1,4 +1,4 @@
-#1 Funktion: Custom Getränke eintragen. Menge und Alkoholgehalt
+#1 Änderung: Custom Getränke eintragen. Menge und Alkoholgehalt eingeben. Wäre es möglich, den Barcode zum Beispiel auf einer Bierflasche abzuscannen und die App erkennt automatisch Menge und Alkoholgehalt?
 
 #2 Entferne Party Dauer
 
