@@ -7,8 +7,6 @@ import os
 import cloudinary
 import cloudinary.uploader
 import cloudinary.api
-from streamlit_webrtc import webrtc_streamer
-import cv2
 from pyzbar.pyzbar import decode
 import numpy as np
 import requests
@@ -539,7 +537,7 @@ elif st.session_state.current_page == "Teilnehmer":
                     st.rerun()
 
 # Im Getränke-Tab den alten Scanner-Code ersetzen:
-if st.session_state.current_page == "Getränke":
+elif st.session_state.current_page == "Getränke":
     st.header("🍺 Getränke verwalten")
     
     if not st.session_state.participants:
