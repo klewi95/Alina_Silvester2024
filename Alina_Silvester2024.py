@@ -11,7 +11,6 @@ from pyzbar.pyzbar import decode
 import numpy as np
 import requests
 # Neue Imports: Barcode Scanner
-from io import BytesIO
 from PIL import Image
 
 # Cloudinary Konfiguration
