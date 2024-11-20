@@ -12,6 +12,11 @@ import cv2
 from pyzbar.pyzbar import decode
 import numpy as np
 import requests
+# Neue Imports: Barcode Scanner
+import base64
+from io import BytesIO
+from PIL import Image
+import av
 
 # Cloudinary Konfiguration
 cloudinary.config(
@@ -64,59 +69,54 @@ SUGGESTED_DRINKS = {
 # Konstanten für Beziehungsstatus
 STATUS_OPTIONS = ["Vergeben", "Single", "Unentschlossen"]
 
-# Barcode Scanner Callback-Klasse
-class BarcodeScanner:
-    def __init__(self):
-        self.barcode_data = None
-        self.last_scan_time = 0
-        
-    def recv(self, frame):
-        img = frame.to_ndarray(format="bgr24")
-        current_time = time.time()
-        
+# Barcode Scanner für Mobile
+def mobile_barcode_scanner():
+    st.write("##### Option 1: Barcode scannen")
+    
+    # Status Info
+    if 'scan_status' not in st.session_state:
+        st.session_state.scan_status = "Scanner bereit..."
+    
+    # Kamera Input
+    camera_input = st.camera_input("Barcode scannen")
+    
+    if camera_input:
+        # Bild verarbeiten
         try:
-            # Debug-Info
-            if not hasattr(self, 'frame_count'):
-                self.frame_count = 0
-            self.frame_count += 1
+            # Konvertiere zu PIL Image
+            image = Image.open(camera_input)
+            # Konvertiere zu Numpy Array
+            img_array = np.array(image)
             
-            # Nur alle 0.5 Sekunden scannen
-            if current_time - self.last_scan_time > 0.5:
-                # Debug-Info
-                st.session_state.scan_status = "Scanning..."
-                
-                # Bildqualität verbessern
-                gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-                # Kontrast erhöhen
-                gray = cv2.convertScaleAbs(gray, alpha=1.5, beta=0)
-                
-                barcodes = decode(gray)
-                
+            # OpenCV Verarbeitung
+            gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
+            # Kontrast erhöhen
+            gray = cv2.convertScaleAbs(gray, alpha=1.5, beta=0)
+            
+            # Barcode suchen
+            barcodes = decode(gray)
+            
+            if barcodes:
                 for barcode in barcodes:
-                    # Rechteck um Barcode zeichnen
-                    points = barcode.polygon
-                    if len(points) == 4:
-                        pts = np.array(points, np.int32)
-                        pts = pts.reshape((-1, 1, 2))
-                        cv2.polylines(img, [pts], True, (0, 255, 0), 2)
+                    # Barcode gefunden
+                    barcode_data = barcode.data.decode('utf-8')
+                    st.success(f"Barcode gefunden: {barcode_data}")
                     
-                    # Barcode-Daten
-                    self.barcode_data = barcode.data.decode('utf-8')
-                    self.last_scan_time = current_time
-                    
-                    # Debug-Info
-                    st.session_state.scan_status = f"Barcode gefunden: {self.barcode_data}"
-                    
-                    # Text auf Bild
-                    x = barcode.rect.left
-                    y = barcode.rect.top
-                    cv2.putText(img, self.barcode_data, (x, y - 10),
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                    # Getränk in Datenbank suchen
+                    with st.spinner("Suche Getränk..."):
+                        drink_info = get_drink_info_from_barcode(barcode_data)
+                        if drink_info:
+                            st.session_state.barcode_result = drink_info
+                            st.success(f"✅ Getränk erkannt: {drink_info['name']}")
+                            if drink_info['image_url']:
+                                st.image(drink_info['image_url'], width=100)
+                        else:
+                            st.error("❌ Getränk nicht in Datenbank gefunden")
+            else:
+                st.warning("Kein Barcode erkannt. Bitte erneut versuchen.")
                 
         except Exception as e:
-            st.session_state.scan_status = f"Fehler beim Scannen: {str(e)}"
-        
-        return img
+            st.error(f"Fehler beim Scannen: {str(e)}")
 
 def get_drink_info_from_barcode(barcode):
     """Ruft Getränkeinformationen von OpenFoodFacts API ab"""
@@ -538,7 +538,8 @@ elif st.session_state.current_page == "Teilnehmer":
                     st.success(f"{name} wurde von der Party entfernt.")
                     st.rerun()
 
-elif st.session_state.current_page == "Getränke":
+# Im Getränke-Tab den alten Scanner-Code ersetzen:
+if st.session_state.current_page == "Getränke":
     st.header("🍺 Getränke verwalten")
     
     if not st.session_state.participants:
@@ -546,34 +547,6 @@ elif st.session_state.current_page == "Getränke":
     else:
         tab1, tab2, tab3 = st.tabs(["Standard Getränk", "Custom Getränk", "Getränke verwalten"])
         
-        with tab1:
-            st.subheader("Standard Getränk hinzufügen")
-            name = st.selectbox("Teilnehmer auswählen", 
-                              list(st.session_state.participants.keys()),
-                              key="add_standard_drink_participant")
-            
-            standard_drinks = {k: v for k, v in DRINKS.items() if k != "Custom 🍾"}
-            drink_type = st.selectbox("Getränk auswählen", 
-                                    list(standard_drinks.keys()))
-            
-            if st.button("Standard Getränk eintragen"):
-                st.session_state.participants[name]['drinks'].append({
-                    'type': drink_type,
-                    'time': time.time(),
-                    'custom': False
-                })
-                person = st.session_state.participants[name]
-                current_bac = calculate_bac(person['weight'], person['gender'], person['drinks'])
-                add_activity('drink', {
-                    'person': name,
-                    'drink': drink_type,
-                    'bac': current_bac
-                })
-                check_party_milestones()
-                save_data()
-                st.success(f"Getränk wurde eingetragen! Aktueller Promillewert: {format_bac(current_bac)}‰ 🍻")
-                st.balloons()
-
         with tab2:
             st.subheader("Custom Getränk hinzufügen")
             name = st.selectbox("Teilnehmer auswählen", 
@@ -583,53 +556,7 @@ elif st.session_state.current_page == "Getränke":
             col1, col2 = st.columns(2)
             
             with col1:
-                st.write("##### Option 1: Barcode scannen")
-                
-                # Status-Info hinzufügen
-                if 'scan_status' not in st.session_state:
-                    st.session_state.scan_status = "Scanner bereit..."
-                
-                # Scanner Status anzeigen
-                st.info(f"Scanner Status: {st.session_state.scan_status}")
-                
-                # Scanner starten
-                scanner = BarcodeScanner()
-                ctx = webrtc_streamer(
-                    key="drink-scanner",
-                    video_processor_factory=lambda: scanner,
-                    media_stream_constraints={
-                        "video": {
-                            "width": {"ideal": 1280},
-                            "height": {"ideal": 720},
-                            "facingMode": "environment"  # Rückkamera bei Mobilgeräten
-                        },
-                        "audio": False
-                    },
-                    async_processing=True
-                )
-                
-                if ctx.video_processor and scanner.barcode_data:
-                    if time.time() - st.session_state.last_scan_time > 2:
-                        with st.spinner("Suche Getränk in Datenbank..."):
-                            drink_info = get_drink_info_from_barcode(scanner.barcode_data)
-                            if drink_info:
-                                st.session_state.barcode_result = drink_info
-                                st.success(f"✅ Getränk erkannt: {drink_info['name']}")
-                                if drink_info['image_url']:
-                                    st.image(drink_info['image_url'], width=100)
-                            else:
-                                st.error("❌ Getränk nicht in Datenbank gefunden")
-                        st.session_state.last_scan_time = time.time()
-
-                # Hilfe-Text
-                with st.expander("📝 Scanning Tipps"):
-                    st.markdown("""
-                    - Halten Sie den Barcode ruhig und gerade in die Kamera
-                    - Achten Sie auf gute Beleuchtung
-                    - Der Barcode sollte mindestens 1/3 des Bildschirms ausfüllen
-                    - Versuchen Sie verschiedene Abstände zur Kamera
-                    - Bei Mobilgeräten: Erlauben Sie den Zugriff auf die Kamera
-                    """)
+                mobile_barcode_scanner()  # Neue Scanner-Funktion
                 
             with col2:
                 st.write("##### Option 2: Aus Vorschlägen wählen")
