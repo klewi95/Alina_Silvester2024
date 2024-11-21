@@ -11,7 +11,10 @@ from pyzbar.pyzbar import decode
 import numpy as np
 import requests
 # Neue Imports: Barcode Scanner
+import base64
+from io import BytesIO
 from PIL import Image
+import av
 
 # Cloudinary Konfiguration
 cloudinary.config(
@@ -45,13 +48,6 @@ DRINKS = {
     "Wein 🍷": {"alcohol_content": 0.12, "volume": 200},
     "Schnaps 🥃": {"alcohol_content": 0.40, "volume": 20},
     "Custom 🍾": {"alcohol_content": None, "volume": None}
-}
-
-# Neue Konstante für Getränkekategorien
-DRINK_CATEGORIES = {
-    "Bier 🍺": ["Pils", "Weizen", "Craft Beer", "Radler", "Alkoholfrei"],
-    "Wein 🍷": ["Rotwein", "Weißwein", "Rosé", "Sekt", "Prosecco", "Champagner"],
-    "Schnaps 🥃": ["Vodka", "Whiskey", "Gin", "Rum", "Jägermeister", "Likör", "Shots"]
 }
 
 # Vorgeschlagene Getränke-Datenbank
@@ -549,18 +545,17 @@ elif st.session_state.current_page == "Getränke":
     else:
         tab1, tab2, tab3 = st.tabs(["Standard Getränk", "Custom Getränk", "Getränke verwalten"])
         
-        # Änderung im Getränke-Tab, im "Standard Getränk" Tab:
         with tab1:
             st.subheader("Standard Getränk hinzufügen")
             name = st.selectbox("Teilnehmer auswählen", 
-                            list(st.session_state.participants.keys()),
-                            key="add_standard_drink_participant")
+                              list(st.session_state.participants.keys()),
+                              key="add_standard_drink_participant")
             
             # Getränkeauswahl mit Tooltip
             col1, col2 = st.columns([3,1])
             with col1:
                 drink_type = st.selectbox("Getränk auswählen", 
-                                        list(DRINKS.keys())[:-1])  # Ohne Custom Option
+                                        [k for k in DRINKS.keys() if k != "Custom 🍾"])
             with col2:
                 drink_info = DRINKS[drink_type]
                 st.info(f"""
@@ -568,6 +563,24 @@ elif st.session_state.current_page == "Getränke":
                 - Menge: {drink_info['volume']}ml
                 - Alkohol: {drink_info['alcohol_content']*100:.1f}%
                 """)
+            
+            if st.button("Standard Getränk eintragen"):
+                st.session_state.participants[name]['drinks'].append({
+                    'type': drink_type,
+                    'time': time.time(),
+                    'custom': False
+                })
+                person = st.session_state.participants[name]
+                current_bac = calculate_bac(person['weight'], person['gender'], person['drinks'])
+                add_activity('drink', {
+                    'person': name,
+                    'drink': drink_type,
+                    'bac': current_bac
+                })
+                check_party_milestones()
+                save_data()
+                st.success(f"Getränk wurde eingetragen! Aktueller Promillewert: {format_bac(current_bac)}‰ 🍻")
+                st.balloons()
 
         with tab2:
             st.subheader("Custom Getränk hinzufügen")
@@ -595,30 +608,6 @@ elif st.session_state.current_page == "Getränke":
                     - Menge: {drink_info['volume']}ml
                     """)
             
-            # Im Custom Getränk Tab, vor den Details des Getränks:
-            st.write("##### Getränkekategorie")
-            drink_category = st.selectbox(
-                "Kategorie",
-                list(DRINK_CATEGORIES.keys()),
-                key="drink_category"
-            )
-            drink_subcategory = st.selectbox(
-                "Art",
-                DRINK_CATEGORIES[drink_category],
-                key="drink_subcategory"
-            )
-
-            # Vorschlagswerte basierend auf Kategorie
-            if drink_category == "Bier 🍺":
-                suggested_volume = 500
-                suggested_alcohol = 5.0
-            elif drink_category == "Wein 🍷":
-                suggested_volume = 200
-                suggested_alcohol = 12.0
-            else:  # Schnaps
-                suggested_volume = 40
-                suggested_alcohol = 40.0
-
             st.write("##### Details des Getränks")
             col3, col4 = st.columns(2)
             with col3:
@@ -635,33 +624,26 @@ elif st.session_state.current_page == "Getränke":
                     default_volume = 500
                     default_alcohol = 5.0
                 
-                custom_name = st.text_input(
-                    "Name des Getränks", 
-                    value=f"{drink_subcategory}: {default_name}" if default_name else drink_subcategory
-                )
-                custom_volume = st.number_input(
-                    "Menge (ml)", 
-                    min_value=1, 
-                    max_value=1000,
-                    value=int(default_volume or suggested_volume)
-                )
+                custom_name = st.text_input("Name des Getränks", value=default_name)
+                custom_volume = st.number_input("Menge (ml)", 
+                                              min_value=1, 
+                                              max_value=1000,
+                                              value=int(default_volume))
+            
             with col4:
                 custom_alcohol = st.number_input("Alkoholgehalt (%)", 
                                                min_value=0.0, 
                                                max_value=99.9,
-                                               value=float(default_alcohol or suggested_alcohol),
-                                               step=0.1
-                )
+                                               value=float(default_alcohol),
+                                               step=0.1)
                 
             if st.button("Custom Getränk eintragen"):
                 if not custom_name:
                     st.error("Bitte gib einen Namen für das Getränk ein!")
                 else:
-                    custom_drink_type = f"{drink_category} - {custom_name}"
+                    custom_drink_type = f"Custom: {custom_name}"
                     st.session_state.participants[name]['drinks'].append({
                         'type': custom_drink_type,
-                        'category': drink_category,
-                        'subcategory': drink_subcategory,
                         'time': time.time(),
                         'custom': True,
                         'alcohol_content': custom_alcohol / 100,
@@ -692,43 +674,28 @@ elif st.session_state.current_page == "Getränke":
                 person = st.session_state.participants[selected_participant]
                 drinks = person['drinks']
                 
-                # In der Getränkeverwaltung (tab3)
                 if drinks:
                     current_bac = calculate_bac(person['weight'], person['gender'], drinks)
                     st.info(f"Aktueller Promillewert: {format_bac(current_bac)}‰")
                     
-                    # Gruppiere Getränke nach Kategorie
-                    drinks_by_category = {}
                     for idx, drink in enumerate(drinks):
-                        category = drink.get('category', "Standard Getränke")
-                        if category not in drinks_by_category:
-                            drinks_by_category[category] = []
-                        drinks_by_category[category].append((idx, drink))
-                    
-                    # Zeige Getränke nach Kategorie gruppiert
-                    for category, category_drinks in drinks_by_category.items():
-                        with st.expander(f"{category} ({len(category_drinks)} Getränke)"):
-                            for idx, drink in category_drinks:
-                                col1, col2, col3, col4 = st.columns([2, 1, 2, 1])
-                                with col1:
-                                    st.write(f"{drink['type']}")
-                                with col2:
-                                    if 'subcategory' in drink:
-                                        st.caption(drink['subcategory'])
-                                with col3:
-                                    drink_time = datetime.fromtimestamp(drink['time'])
-                                    st.write(f"🕒 {drink_time.strftime('%H:%M Uhr')}")
-                                with col4:
-                                    if st.button("❌", key=f"remove_drink_{idx}"):
-                                        if remove_drink(selected_participant, idx):
-                                            st.success("Getränk wurde entfernt!")
-                                            updated_bac = calculate_bac(
-                                                person['weight'], 
-                                                person['gender'], 
-                                                person['drinks']
-                                            )
-                                            st.info(f"Neuer Promillewert: {format_bac(updated_bac)}‰")
-                                            st.rerun()
+                        col1, col2, col3 = st.columns([2, 2, 1])
+                        with col1:
+                            st.write(f"{drink['type']}")
+                        with col2:
+                            drink_time = datetime.fromtimestamp(drink['time'])
+                            st.write(f"🕒 {drink_time.strftime('%H:%M Uhr')}")
+                        with col3:
+                            if st.button("❌", key=f"remove_drink_{idx}"):
+                                if remove_drink(selected_participant, idx):
+                                    st.success("Getränk wurde entfernt!")
+                                    updated_bac = calculate_bac(
+                                        person['weight'], 
+                                        person['gender'], 
+                                        person['drinks']
+                                    )
+                                    st.info(f"Neuer Promillewert: {format_bac(updated_bac)}‰")
+                                    st.rerun()
                 else:
                     st.info("Noch keine Getränke eingetragen.")
 
