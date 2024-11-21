@@ -2,8 +2,12 @@
 
 #2 Entferne Party Dauer
 
-#3 Nichttrinker verwalten
+#3 Nichttrinker hinzufügen und verwalten
 
 #4 Weed verwalten
 
 #5 Getränke verwalten. Zählt herunter.
+
+#6 Getränke verwalten. Standard Getränk Tooltip mit Standard Werten Menge + Alkoholgehalt
+
+#7 Getränke verwalten. Custom Getränke. Getränkeart zuordnen: Bier, Wein, Schnaps.
